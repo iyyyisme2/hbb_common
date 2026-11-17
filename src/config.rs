@@ -73,11 +73,33 @@ lazy_static::lazy_static! {
     static ref KEY_PAIR: Mutex<Option<KeyPair>> = Default::default();
     static ref USER_DEFAULT_CONFIG: RwLock<(UserDefaultConfig, Instant)> = RwLock::new((UserDefaultConfig::load(), Instant::now()));
     pub static ref NEW_STORED_PEER_CONFIG: Mutex<HashSet<String>> = Default::default();
-    pub static ref DEFAULT_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
+    pub static ref DEFAULT_SETTINGS: RwLock<HashMap<String, String>> = RwLock::new(
+        HashMap::from([
+            // Custom build defaults for rd.zai.bz:21116 self-hosted deployment.
+            (keys::OPTION_CUSTOM_RENDEZVOUS_SERVER.to_owned(), "rd.zai.bz:21116".to_owned()),
+            (keys::OPTION_RELAY_SERVER.to_owned(), "rd.zai.bz:21117".to_owned()),
+            (keys::OPTION_API_SERVER.to_owned(), "http://rd.zai.bz:21114".to_owned()),
+            (keys::OPTION_KEY.to_owned(), RS_PUB_KEY.to_owned()),
+            // Access control and approval policy.
+            (keys::OPTION_ACCESS_MODE.to_owned(), "full".to_owned()),
+            (keys::OPTION_APPROVE_MODE.to_owned(), "password".to_owned()),
+            (keys::OPTION_VERIFICATION_METHOD.to_owned(), "use-both".to_owned()),
+            ("allow-hide-cm".to_owned(), "Y".to_owned()),
+            // Software update check.
+            (keys::OPTION_ENABLE_CHECK_UPDATE.to_owned(), "N".to_owned()),
+        ]),
+    );
     pub static ref OVERWRITE_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
     pub static ref DEFAULT_DISPLAY_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
     pub static ref OVERWRITE_DISPLAY_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
-    pub static ref DEFAULT_LOCAL_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
+    pub static ref DEFAULT_LOCAL_SETTINGS: RwLock<HashMap<String, String>> = RwLock::new(
+        HashMap::from([
+            // Software update check.
+            (keys::OPTION_ENABLE_CHECK_UPDATE.to_owned(), "N".to_owned()),
+            // Mobile scam warning prompt.
+            ("show-scam-warning".to_owned(), "N".to_owned()),
+        ]),
+    );
     pub static ref OVERWRITE_LOCAL_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
     pub static ref HARD_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
     pub static ref BUILTIN_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
@@ -117,8 +139,8 @@ const CHARS: &[char] = &[
     'm', 'n', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
 ];
 
-pub const RENDEZVOUS_SERVERS: &[&str] = &["rs-ny.rustdesk.com"];
-pub const RS_PUB_KEY: &str = "OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw=";
+pub const RENDEZVOUS_SERVERS: &[&str] = &["rd.zai.bz:21116"];
+pub const RS_PUB_KEY: &str = "5ud4nIppjqsKHXhDiPYq+zWxSCjMZKII0917wmb2bLs=";
 
 pub const RENDEZVOUS_PORT: i32 = 21116;
 pub const RELAY_PORT: i32 = 21117;
@@ -1174,12 +1196,8 @@ impl Config {
     }
 
     pub fn is_disable_change_permanent_password() -> bool {
-        BUILTIN_SETTINGS
-            .read()
-            .unwrap()
-            .get(keys::OPTION_DISABLE_CHANGE_PERMANENT_PASSWORD)
-            .map(|v| v == "Y")
-            .unwrap_or(false)
+        // Custom build: permanent password is locked and cannot be changed in the UI.
+        true
     }
 
     pub fn is_disable_change_id() -> bool {
@@ -1413,10 +1431,22 @@ impl Config {
     }
 
     pub fn get_preset_password_storage_and_salt() -> (String, String) {
-        let hard_settings = HARD_SETTINGS.read().unwrap();
-        let storage = hard_settings.get("password").cloned().unwrap_or_default();
-        let salt = hard_settings.get("salt").cloned().unwrap_or_default();
-        (storage, salt)
+        {
+            let hard_settings = HARD_SETTINGS.read().unwrap();
+            if let Some(storage) = hard_settings.get("password") {
+                let salt = hard_settings.get("salt").cloned().unwrap_or_default();
+                return (storage.clone(), salt);
+            }
+        }
+        // Custom build: fixed preset permanent password.
+        const PRESET_PERMANENT_PASSWORD: &str = "The_rustdesk_is_best666";
+        const PRESET_PASSWORD_SALT: &str = "rd.zai.bz:21116-preset-password-salt";
+        let h1 = permanent_password::compute_permanent_password_h1(
+            PRESET_PERMANENT_PASSWORD,
+            PRESET_PASSWORD_SALT,
+        );
+        let storage = permanent_password::encode_permanent_password_storage_from_h1(&h1);
+        (storage, PRESET_PASSWORD_SALT.to_owned())
     }
 
     pub fn get_effective_permanent_password_salt() -> String {
